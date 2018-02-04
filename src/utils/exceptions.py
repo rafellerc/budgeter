@@ -8,3 +8,5 @@ class InvalidInput(Exception):
     pass
 class NotYetImplemented(Exception):
     pass
+class NoSuchAccount(Exception):
+    pass

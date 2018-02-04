@@ -1,7 +1,5 @@
-import tableprint as tp
-import numpy as np
+import codecs
+from ofxparse import OfxParser
 
-data = [['tois',1],['top',2]]
-headers = ['Column A', 'Column B']
-
-tp.table(data, headers)
+with codecs.open('file.ofx') as fileobj:
+    ofx = OfxParser.parse(fileobj)

@@ -1,14 +1,22 @@
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, Numeric, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy import Sequence
 from os import path
 import tableprint as tp
-from utils.exceptions import NotYetImplemented, InvalidInput
+from utils.exceptions import NotYetImplemented, InvalidInput, NoSuchAccount
+import json
+
+from ofxparse import OfxParser
 
 #TODO Pass path to root as global variable
 PATH_TO_ROOT = path.dirname(path.dirname(path.realpath(__file__)))
 
 Base = declarative_base()
+
+#SQLAlchemy cheatsheet https://www.pythonsheets.com/notes/python-sqlalchemy.html
+
+
 
 #Table Accounts, contains all the accounts held by the user (Ex: SavingsAccount, CreditCard)
 class Account(Base):
@@ -26,9 +34,11 @@ class Account(Base):
         return "<Account(name={}, type={}, currency={}, description={})>".format(self.name,self.acc_type,self.currency,self.descr)
 
 #This table describes all the entries set by the user
+#TODO Replace year/month/day for a datetime.date type
 class Entry(Base):
     __tablename__ = 'entries'
-    id_ = Column(Integer, primary_key=True)
+    #TODO Check if the use of Sequence is enough to guarantee the uniqueness of the entries
+    id_ = Column(Integer, Sequence('user_id_seq'), primary_key=True)
     account_name = Column(String,ForeignKey('accounts.name'))
     account = relationship("Account", back_populates="entries")
     year = Column(Integer)
@@ -80,6 +90,7 @@ def create_new_database(db_name,verbose=False):
     session = Session()
     return session, engine
 
+#TODO Check if it would be better to use a datatime type instead of 3 ints
 def show_table(session,mode='entries',by_account='all',between_YMD=[]):
     """This function displays the contents of the database tables according
     to the specifications of the caller. If mode 'accounts' is chosen, all the
@@ -145,13 +156,97 @@ def show_table(session,mode='entries',by_account='all',between_YMD=[]):
     else:
         raise InvalidInput
 
-def add_entry():
+def add_entry(session, acc_name='unknown',year=1500,month=1,day=0,
+            value=0.99,descr='None',transfer='unknown',transfer_id=0):
+    #TODO query the accounts table to get the account correspondent with the given name
+    #TODO if no account is found, raise exception
+    if acc_name not in get_accounts(session):
+        #TODO Maybe give the possibility to the user of automaticaly adding the new account
+        raise NoSuchAccount("There is no account in the database with the name '{}'".format(acc_name))
+    entry = Entry(account_name = acc_name, year=year,month=month,day=day,
+                    value=value*100, descr=descr, transfer=transfer,
+                    transfer_id=transfer_id, reconciled=False)
+    session.add(entry)
+    session.commit()
+
+def delete_entry():
     raise NotYetImplemented
-def add_account():
-    raise NotYetImplemented
+
+
+def create_account(session, name='unknown', acc_type='Equity',currency= 'BRL',
+                    descr='None'):
+    """This function creates a new account in the database with the given parameters
+    in the given session.
+    """
+    #TODO Check for consistency in all the fields.
+    account = Account(name=name, acc_type=acc_type, currency=currency, descr=descr)
+    session.add(account)
+    session.commit()
+
+def import_ofx(session,file_path):
+    """Imports the entries in the statement of an ofx file.
+    """
+    with open(file_path,'rb') as fil:
+        ofx = OfxParser.parse(fil)
+    #This part decides which account it corresponds to.
+    account = decide_account(session,ofx)
+    for tran in ofx.account.statement.transactions:
+        #TODO Check if there is no corresponding transaction already in the entries
+        #TODO Try to reconcile?
+        add_entry(session, acc_name=account,year=tran.date.year,month=tran.date.month,
+                day=tran.date.day, value=tran.amount,descr=tran.memo,transfer='unknown',transfer_id=0)
+
+def decide_account(session,ofx_parse):
+    """Given an ofx parse object this function tries to figure out to which account
+    it corresponds from the information contained in the ofx file. It returns the
+    name of the account used in the database
+    """
+    #Tries to open the account metadata file
+    try:
+        with open(path.join(PATH_TO_ROOT,'metadata','account_metadata.json'),'r') as f:
+            #The acc_dict is a dictionary that contains as keys all the active accounts and
+            #as values all the corresponding aliases it might have in the ofx/qif files
+            acc_dict = json.load(f)
+    #If no metadata file is found it creates a dictionary that will be exported in the end
+    except FileNotFoundError:
+        acc_dict = {}
+        for name in get_accounts(session):
+            #Adds an empty list to each active account
+            acc_dict[name] = []
+    acc_found = None
+    all_accs = get_accounts(session)
+    for acc in acc_dict:
+        if ofx_parse.account.number in acc_dict[acc]:
+            acc_found = acc
+    if acc_found == None:
+        #TODO Think about the user interface in this part (maybe replace with a function to
+        # get a better isolation)
+        print("Choose the account that this file corresponds to:")
+        i = 0
+        for acc in all_accs:
+            print("{} - {}".format(i, acc))
+            i += 1
+        ans = int(input("Enter number: "))
+        acc_dict[all_accs[ans]].append(ofx_parse.account.number)
+        acc_found = all_accs[ans]
+    with open(path.join(PATH_TO_ROOT,'metadata','account_metadata.json'),'w') as f:
+        json.dump(acc_dict, f)
+    return acc_found
+
+
+def get_accounts(session):
+    """A method that returns the names of the active accounts in the database.
+    """
+    return [acc.name for acc in session.query(Account)]
 
 if __name__ == '__main__':
-    session, engine = load_database_session('Tois.db')
-    show_table(session,mode = 'tois',by_account=['ccsp','ppsp'],between_YMD=[2016,2,1,2018,1,1])
-
+    # session, engine = load_database_session('Test.db')
+    session, engine = create_new_database('vei.db')
+    # show_table(session,mode='accounts',by_account=['ccsp','ppsp'],between_YMD=[2016,2,1,2018,1,1])
+    create_account(session, name='ppsp')
+    # add_entry(session,acc_name='ccsp',descr='maluco',value=1.50)
+    # add_entry(session,acc_name='',descr='vei')
+    # print(get_accounts(session))
+    import_ofx(session,"/home/rafael/Documents/Contabilidade/ppdf/ppdf2017-01.ofx")
+    show_table(session)
     session.close()
