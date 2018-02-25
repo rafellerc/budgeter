@@ -16,8 +16,6 @@ Base = declarative_base()
 
 #SQLAlchemy cheatsheet https://www.pythonsheets.com/notes/python-sqlalchemy.html
 
-
-
 #Table Accounts, contains all the accounts held by the user (Ex: SavingsAccount, CreditCard)
 class Account(Base):
     __tablename__ = "accounts"
@@ -169,9 +167,11 @@ def add_entry(session, acc_name='unknown',year=1500,month=1,day=0,
     session.add(entry)
     session.commit()
 
-def delete_entry():
-    raise NotYetImplemented
-
+def delete_entry(session, entry_id, delete_transfer=False):
+    """Deletes an entry based on its id.
+    """
+    session.query(Entry).filter(Entry.id_==entry_id).delete()
+    session.commit()
 
 def create_account(session, name='unknown', acc_type='Equity',currency= 'BRL',
                     descr='None'):
@@ -194,7 +194,7 @@ def import_ofx(session,file_path):
         #TODO Check if there is no corresponding transaction already in the entries
         #TODO Try to reconcile?
         add_entry(session, acc_name=account,year=tran.date.year,month=tran.date.month,
-                day=tran.date.day, value=tran.amount,descr=tran.memo,transfer='unknown',transfer_id=0)
+                day=tran.date.day, value=int(tran.amount),descr=tran.memo,transfer='unknown',transfer_id=0)
 
 def decide_account(session,ofx_parse):
     """Given an ofx parse object this function tries to figure out to which account
@@ -239,14 +239,19 @@ def get_accounts(session):
     """
     return [acc.name for acc in session.query(Account)]
 
+def set_transfer(session,id_,acc):
+    """Sets the transfer field to the desired account, and tries to find the counter-
+    """
+    
+
 if __name__ == '__main__':
-    # session, engine = load_database_session('Test.db')
-    session, engine = create_new_database('vei.db')
+    session, engine = load_database_session('vei.db')
+    # session, engine = create_new_database('vei.db')
     # show_table(session,mode='accounts',by_account=['ccsp','ppsp'],between_YMD=[2016,2,1,2018,1,1])
-    create_account(session, name='ppsp')
+    # create_account(session, name='ppsp')
     # add_entry(session,acc_name='ccsp',descr='maluco',value=1.50)
     # add_entry(session,acc_name='',descr='vei')
     # print(get_accounts(session))
-    import_ofx(session,"/home/rafael/Documents/Contabilidade/ppdf/ppdf2017-01.ofx")
+    # import_ofx(session,"/home/rafael/Documents/Contabilidade/ppdf/ppdf2017-01.ofx")
     show_table(session)
     session.close()
